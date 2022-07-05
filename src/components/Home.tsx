@@ -6,6 +6,7 @@ import {
   Form,
   FormControl,
   ListGroup,
+  Button
 } from 'react-bootstrap'
 import { io } from 'socket.io-client'
 import { Message, User } from '../types'
@@ -31,7 +32,7 @@ import { Message, User } from '../types'
 // 15) WE CAN MAKE OTHER CLIENTS AWARE OF OUR NEW MESSAGE SETTING AN EVENT LISTENER FOR A 'message' EVENT
 // AND FILLING THEIR CHATHISTORIES AS WELL
 
-const ADDRESS = 'http://localhost:3030'
+const ADDRESS = 'http://localhost:3001'
 const socket = io(ADDRESS, { transports: ['websocket'] })
 // overriding the default trasports value in order to just leverage the
 // websocket protocol
@@ -41,7 +42,8 @@ const Home = () => {
   const [message, setMessage] = useState('')
   const [loggedIn, setLoggedIn] = useState(false)
   const [onlineUsers, setOnlineUsers] = useState<User[]>([])
-  const [chatHistory, setChatHistory] = useState<Message[]>([])
+  const [chatHistory, setChatHistory] = useState<Message[]>([]) 
+  const [room, setRoom] = useState<"blue" | "red">('blue')
 
   useEffect(() => {
     // this code will be executed just once!
@@ -55,20 +57,24 @@ const Home = () => {
 
     // let's now listen for another type of event, 'loggedin'
     // this should happen once AFTER sending our username
-    socket.on('loggedin', () => {
-      console.log('logged in successfully!')
+    socket.on('loggedin', onlineUsers => {
       setLoggedIn(true)
-      fetchOnlineUsers()
+      setOnlineUsers(onlineUsers)
+      // fetchOnlineUsers()
 
       // I moved this newConnection event listener in the loggedin one,
       // since I don't want this "trap" to be set from the first moment
-      socket.on('newConnection', () => {
+      socket.on('newConnection', onlineUsers => {
         console.log('a new client just connected!')
         // console.log('a new challenger appears!')
-        fetchOnlineUsers()
+        setOnlineUsers(onlineUsers)
+        // fetchOnlineUsers()
+        
       })
 
       socket.on('message', (bouncedMessage) => {
+
+        console.log("MESSAGE: ", message)
         setChatHistory((evaluatedChatHistory) => [
           ...evaluatedChatHistory,
           bouncedMessage,
@@ -83,6 +89,20 @@ const Home = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  
+  useEffect(() => {
+    //let's retrieve this rooms previous chat history from the server
+
+
+    console.log("Room changed. Now it is ", room)
+    socket.on('loggedin', getChatHistory)
+
+    return () => {
+      console.log("Room changing. It was ", room)
+      socket.off('loggedin', getChatHistory)
+    }
+  }, [room ])
+
   const handleUsernameSubmit = () => {
     // let's send our username to the server!
     // this time it's our turn to EMIT an EVENT to the server
@@ -90,6 +110,7 @@ const Home = () => {
     // the type of the event the server is already listening for
     socket.emit('setUsername', {
       username: username,
+      room
     })
     // after sending our username from the client,
     // if everything goes well the backend will emit us back another event
@@ -97,33 +118,33 @@ const Home = () => {
     // in the online users list
   }
 
-  const fetchOnlineUsers = async () => {
-    try {
-      let response = await fetch(ADDRESS + '/online-users')
-      if (response.ok) {
-        let { onlineUsers } = await response.json()
-        setOnlineUsers(onlineUsers)
-      } else {
-        console.log('error happened fetching the users')
-      }
-    } catch (error) {
-      console.log(error)
-    }
-  }
-
   const sendMessage = () => {
     // this function executes just for the sender for the message!
     const newMessage: Message = {
       text: message,
       sender: username,
-      timestamp: Date.now(),
-    }
+      createdAt: new Date().toLocaleString('en-US')
+        }
 
-    socket.emit('sendmessage', newMessage)
+    socket.emit('sendMessage', {message: newMessage, room})
     setChatHistory([...chatHistory, newMessage])
     // this is appending my new message to the chat history in this very moment
     setMessage('')
   }
+
+  const toggleRoom = () => {
+    setRoom(room => room === "blue" ? "red" : "blue")
+  }
+
+  const getChatHistory = async () => {
+    // const response = await fetch(ADDRESS + '/rooms/' + room)
+    const response = await fetch(`${ADDRESS}/rooms/${room}/messages`)
+
+    const data = await response.json()
+
+    setChatHistory(data)
+  }
+
 
   return (
     <Container fluid>
@@ -144,6 +165,13 @@ const Home = () => {
               onChange={(e) => setUsername(e.target.value)}
               disabled={loggedIn}
             />
+          <Button   
+            variant={
+              room === "blue" ? "primary" : "danger"
+            }
+             onClick={toggleRoom}>
+              Room
+            </Button>
           </Form>
           {/* )} */}
           {/* MIDDLE AREA: CHAT HISTORY */}
@@ -151,7 +179,7 @@ const Home = () => {
             {chatHistory.map((element, i) => (
               <ListGroup.Item key={i}>
                 {element.sender} | {element.text} at{' '}
-                {new Date(element.timestamp).toLocaleTimeString('en-US')}
+                {new Date(element.createdAt!).toLocaleTimeString('en-US')}
               </ListGroup.Item>
             ))}
           </ListGroup>
@@ -177,8 +205,8 @@ const Home = () => {
             <ListGroup.Item>Log in to check who's online!</ListGroup.Item>
           )}
           <ListGroup>
-            {onlineUsers.map((user) => (
-              <ListGroup.Item key={user.id}>{user.username}</ListGroup.Item>
+            {onlineUsers.map((user, index) => (
+              <ListGroup.Item key={index}  style={{color: user.room}}>{user.username}</ListGroup.Item>
             ))}
           </ListGroup>
         </Col>
